@@ -1,7 +1,7 @@
 # Security Audit — Dune Awakening Scheduler
 
-**Audit Date:** 2026-05-23
-**Scope:** `scheduled-restart.ps1`, `register-task.ps1`, and supporting files (`battlegroup.ps1`, `vm-utilities.ps1`, `initial-setup.ps1`)
+**Audit Date:** 2026-05-25
+**Scope:** `scheduled-restart.ps1`, `scheduled-watchdog.ps1`, `register-task.ps1`, `register-watchdog.ps1`
 
 ---
 
@@ -22,87 +22,92 @@
 
 ### [HIGH] Webhook URL stored in plaintext
 **File:** `scheduled-restart.ps1`
-**Description:** The Discord webhook URL is stored as a plaintext string in the script file. Anyone with read access to the file can post messages to your Discord channel.
-**Resolution:** Documented in README to not commit the file with the URL populated. Users should treat the webhook URL as a secret. An optional improvement would be to store it in Windows Credential Manager and retrieve it at runtime — not implemented here to keep setup simple for non-technical users.
+**Description:** The Discord webhook URL is stored as a plaintext string. Anyone with read access to the file can post to your Discord channel.
+**Resolution:** The configured file is listed in `.gitignore` so it is never committed. Only the blank `.example.ps1` template is tracked by Git. Users are warned in the README not to share the configured file. An optional improvement would be Windows Credential Manager storage — not implemented here to keep setup accessible for non-technical users.
 
 ---
 
 ### [MEDIUM] SSH with StrictHostKeyChecking=no
-**File:** `scheduled-restart.ps1`, `vm-utilities.ps1`, `battlegroup.ps1`
-**Description:** All SSH calls use `-o StrictHostKeyChecking=no`, which disables host key verification. This makes the connection vulnerable to a man-in-the-middle attack on the local network.
-**Context:** This is consistent with the original scripts and is a deliberate trade-off for ease of setup on home/LAN networks where the VM IP is controlled by the host machine itself.
-**Recommendation:** For production or internet-exposed setups, remove `StrictHostKeyChecking=no` after the initial connection has been made and the host key cached. The known_hosts entry will then be verified on subsequent connections.
+**Files:** `scheduled-restart.ps1`, `scheduled-watchdog.ps1`
+**Description:** All SSH calls use `-o StrictHostKeyChecking=no`, disabling host key verification and leaving connections vulnerable to man-in-the-middle attacks on the local network.
+**Context:** The VM IP is controlled by the Hyper-V host itself, making MITM attacks on a home/LAN network extremely unlikely. This is a deliberate trade-off for ease of setup.
+**Recommendation:** For hardened setups, remove `StrictHostKeyChecking=no` after the first connection so the host key is cached and verified on subsequent runs.
 **Status:** Accepted / documented.
 
 ---
 
-### [MEDIUM] SSH key path uses environment variable at register time
-**File:** `scheduled-restart.ps1` (original version)
-**Description:** The original script used `$env:LOCALAPPDATA` to build the SSH key path. When Task Scheduler runs as SYSTEM or a different user, this resolves to the wrong profile path, causing authentication failures.
-**Resolution:** Updated script now uses a fully explicit path with `$env:USERNAME` resolved at script-load time, with a pre-flight `Test-Path` check that fails fast with a clear error message before attempting SSH.
+### [MEDIUM] SSH key path uses environment variable
+**File:** `scheduled-restart.ps1`
+**Description:** `$env:USERNAME` is used to build the SSH key path. When Task Scheduler runs as a different user this resolves incorrectly.
+**Resolution:** `$env:USERNAME` is resolved at script load time (not inside a string passed to another process), and a `Test-Path` pre-flight check fails fast with a clear error if the key is not found.
 
 ---
 
 ### [MEDIUM] No error handling on SSH exit code (original)
 **File:** `scheduled-restart.ps1` (original version)
-**Description:** The original script sent a "restarted successfully" Discord notification unconditionally, even if the SSH command failed silently.
-**Resolution:** Updated script checks `$LASTEXITCODE` after the SSH call and throws an exception on non-zero exit, which routes to the failure notification path instead.
+**Description:** The original script sent a success notification unconditionally even if SSH failed silently.
+**Resolution:** All SSH calls now check `$LASTEXITCODE` and throw on non-zero exit, routing to the failure notification path.
 
 ---
 
-### [LOW] Transcript log directory world-accessible
+### [LOW] Transcript log directory uses default NTFS permissions
 **File:** `scheduled-restart.ps1`
-**Description:** Logs are written to a `logs\` subdirectory with default NTFS permissions, which may be readable by standard users on a shared machine.
-**Recommendation:** If this host is shared, restrict the logs folder: `icacls logs /inheritance:r /grant:r "Administrators:(OI)(CI)F"`
-**Status:** Accepted — most users run this on a personal/dedicated server machine.
+**Description:** The `logs\` directory is created with default permissions and may be readable by standard users on a shared machine.
+**Recommendation:** On shared machines, restrict the folder: `icacls logs /inheritance:r /grant:r "Administrators:(OI)(CI)F"`
+**Status:** Accepted — most users run this on a personal or dedicated server host.
 
 ---
 
-### [LOW] Task runs with highest privileges
-**File:** `register-task.ps1`
-**Description:** The scheduled task is registered with `RunLevel Highest` (elevated). This is required for Hyper-V PowerShell cmdlets (`Get-VMNetworkAdapter`) but means the script runs with full admin rights on every execution.
-**Recommendation:** Ensure the script file and its parent directory are only writable by administrators to prevent privilege escalation via script replacement.
-**Status:** Required for functionality. Documented.
+### [LOW] Scheduled tasks run with highest privileges
+**Files:** `register-task.ps1`, `register-watchdog.ps1`
+**Description:** Both tasks are registered with `RunLevel Highest`. This is required for Hyper-V PowerShell cmdlets but means the scripts run with full admin rights.
+**Recommendation:** Ensure the script directory is only writable by administrators to prevent privilege escalation via script replacement.
+**Status:** Required for functionality. Documented in README.
 
 ---
 
-### [LOW] `initial-setup.ps1` displays default VM password in plaintext
-**File:** `initial-setup.ps1`
-**Description:** Line 356 writes `"When prompted, enter the password: dune"` to the console. This is the well-known default and is only shown during initial setup, but it confirms the default credential publicly.
-**Context:** This is part of the upstream Dune Awakening server tooling, not the scheduler scripts, and the password is changed during the same setup flow.
-**Status:** Informational. Out of scope for this release.
+### [LOW] `watchdog-state.json` is unprotected
+**File:** `scheduled-watchdog.ps1`
+**Description:** The watchdog state file is written with default permissions. Tampering with it could suppress crash notifications or trigger false restarts.
+**Recommendation:** On shared machines, apply the same ACL restriction as the logs folder.
+**Status:** Accepted — low risk on a dedicated server host.
 
 ---
 
 ## Informational Notes
 
-**Password handling in `vm-utilities.ps1`**
-`Set-VmPassword` correctly uses `SecureString` for input and clears the plaintext variable immediately after use (`$plain = $null`). This is good practice.
+**Update check disabled by default**
+`$enableUpdateCheck` defaults to `$false` following a confirmed issue where `battlegroup update` causes a Steam symlink error (`ln: /home/dune/.steam/root: No such file or directory`) on the Linux VM in the current server release. The feature remains in the script and can be re-enabled when Funcom resolves the upstream issue.
 
-**SSH key rotation**
-`Update-SshKey` in `vm-utilities.ps1` uses an atomic move pattern (`authorized_keys.new` → `authorized_keys`) to prevent a race condition where the authorized_keys file is empty mid-write. This is well-implemented.
+**In-game warnings stubbed**
+`Send-InGameWarning` is a no-op placeholder. The Dune Awakening battlegroup does not currently expose a broadcast or RCON interface. The function logs a clean skip message and will be wired up when official support lands.
 
-**Base64 remote script injection**
-`initial-setup.ps1` and `vm-utilities.ps1` use base64-encoded payloads piped via SSH (`echo $b64 | base64 -d | sh`). This is a reasonable approach for sending multi-line scripts without temp file risk, but means any compromise of the Windows host could result in arbitrary code execution on the Linux VM. This is inherent to the architecture.
+**Watchdog requires 2 consecutive failures**
+The watchdog will not restart on a single failed health check, reducing false positives during normal scheduled restarts. State is persisted in `watchdog-state.json` between runs.
 
-**`-NonInteractive` flag added**
-The updated `register-task.ps1` adds `-NonInteractive` to the PowerShell invocation in the scheduled task action. This prevents the task from hanging on unexpected prompts when running headless.
+**`-NonInteractive` and `-MultipleInstances IgnoreNew`**
+The restart task uses `-NonInteractive` to prevent hanging on unexpected prompts. The watchdog task uses `MultipleInstances IgnoreNew` so overlapping executions are silently skipped rather than queued.
 
 ---
 
-## Files Modified in This Release
+## Files in This Release
 
-| File | Changes |
+| File | Purpose |
 |------|---------|
-| `scheduled-restart.ps1` | Added error handling, pre-flight checks, logging, `IdentitiesOnly=yes`, `$ErrorActionPreference`, `Set-StrictMode`, try/catch/finally, non-fatal Discord errors |
-| `register-task.ps1` | Added `-NonInteractive` flag, existing task detection, path validation, `-StartWhenAvailable` setting |
-| `README.md` | New file — setup guide and security notes |
+| `scheduled-restart.ps1` | Main restart script with warnings, update check stub, Discord notifications |
+| `scheduled-restart.example.ps1` | Blank template safe for public repository commit |
+| `scheduled-watchdog.ps1` | Crash detection and auto-recovery watchdog |
+| `register-task.ps1` | One-time Task Scheduler registration for restart task |
+| `register-watchdog.ps1` | One-time Task Scheduler registration for watchdog task |
+| `README.md` | Setup guide, known limitations, troubleshooting |
+| `SECURITY_AUDIT.md` | This document |
+| `.gitignore` | Prevents configured `scheduled-restart.ps1` from being committed |
 
-## Files Not Modified
+## Files Not Modified (upstream)
 
 | File | Notes |
 |------|-------|
-| `battlegroup.ps1` | Upstream tool — out of scope |
-| `vm-utilities.ps1` | Upstream tool — out of scope |
-| `initial-setup.ps1` | Upstream tool — out of scope |
-| `battlegroup.bat` | Upstream tool — out of scope |
+| `battlegroup.ps1` | Official management script — out of scope |
+| `vm-utilities.ps1` | Official utility script — out of scope |
+| `initial-setup.ps1` | Official setup script — out of scope |
+| `battlegroup.bat` | Official launcher — out of scope |

@@ -30,7 +30,7 @@ $warningMinutes = @(15, 5, 1)
 
 # Update check — check for and apply updates before restarting
 # Set to $true to enable, $false to disable
-$enableUpdateCheck = $true
+$enableUpdateCheck = $false  # Currently unsupported — see README for details
 
 # Auto-restart on crash — read by scheduled-watchdog.ps1
 # Toggle here to enable/disable without re-registering the watchdog task
@@ -94,17 +94,15 @@ function Get-ServerVersion {
     param([string]$Ip)
     $result = Invoke-SshCommand -Ip $Ip -Command "/home/dune/.dune/bin/battlegroup status"
     $match = [regex]::Match($result.Output, '(\d{7,}-\d+-\w+)')
-    return if ($match.Success) { $match.Value } else { $null }
+    if ($match.Success) { return $match.Value }
+    return $null
 }
 
+# In-game broadcast is not yet supported by the Dune Awakening battlegroup.
+# This function is a placeholder for when Funcom adds an official broadcast/RCON interface.
 function Send-InGameWarning {
     param([string]$Ip, [int]$MinutesRemaining)
-    $label = if ($MinutesRemaining -eq 1) { "1 MINUTE" } else { "$MinutesRemaining MINUTES" }
-    $message = "SERVER RESTART IN $label. Please find a safe location."
-    # Broadcast to all running game server pods
-    $remoteCmd = "sudo kubectl get pods -A --no-headers -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name' 2>/dev/null | grep -v '<none>' | while read ns pod; do sudo kubectl exec -n `$ns `$pod -- /bin/sh -c ""rcon-cli say '$message' 2>/dev/null || true"" 2>/dev/null || true; done"
-    $null = Invoke-SshCommand -Ip $Ip -Command $remoteCmd
-    Write-Host "In-game warning sent ($MinutesRemaining min): $message"
+    Write-Host "In-game warning skipped ($MinutesRemaining min) — no broadcast interface available yet."
 }
 
 # ------------------------------------------------------------------------------
@@ -132,7 +130,9 @@ try {
     if ($enableUpdateCheck) {
         Write-Host "Checking for server update..."
         $versionBefore = Get-ServerVersion -Ip $ip
-        Write-Host "Current version: $(if ($versionBefore) { $versionBefore } else { 'unknown' })"
+        $displayVersionBefore = 'unknown'
+        if ($versionBefore) { $displayVersionBefore = $versionBefore }
+        Write-Host "Current version: $displayVersionBefore"
 
         $updateResult = Invoke-SshCommand -Ip $ip -Command "/home/dune/.dune/bin/battlegroup update"
         Write-Host "Update output: $($updateResult.Output)"
@@ -145,7 +145,9 @@ try {
                 -Message "**Dune Awakening** - Server updated from ``$versionBefore`` to ``$versionAfter``." `
                 -Color 3447003
         } else {
-            Write-Host "Server is up to date. Version: $(if ($versionAfter) { $versionAfter } else { 'unknown' })"
+            $displayVersion = 'unknown'
+            if ($versionAfter) { $displayVersion = $versionAfter }
+            Write-Host "Server is up to date. Version: $displayVersion"
         }
     }
 
@@ -167,9 +169,10 @@ try {
             $elapsed = $totalLeadMinutes - $minutes
 
             Write-Host "Sending $minutes-minute warning..."
-            $suffix = if ($minutes -eq 1) { "minute" } else { "minutes" }
+            $warnSuffix = 'minutes'
+            if ($minutes -eq 1) { $warnSuffix = 'minute' }
             Send-DiscordNotification `
-                -Message "**Dune Awakening** - Server restarting in **$minutes $suffix**. Find a safe location!" `
+                -Message "**Dune Awakening** - Server restarting in **$minutes $warnSuffix**. Find a safe location!" `
                 -Color 16744272
             Send-InGameWarning -Ip $ip -MinutesRemaining $minutes
         }

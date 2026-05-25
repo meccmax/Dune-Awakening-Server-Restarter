@@ -7,12 +7,20 @@ Automated server management for Dune Awakening self-hosted dedicated servers run
 ## Features
 
 - **Scheduled restarts** every 4 hours (or any interval you choose)
-- **Pre-restart warnings** — notifies players in Discord and attempts in-game broadcast before every restart
-- **Update check** — checks for and applies server updates before each restart
+- **Pre-restart warnings** — notifies players on Discord before every restart
 - **Crash watchdog** — checks server health every 5 minutes, auto-restarts on crash
-- **Discord notifications** for restarts, updates, crashes, and recoveries
+- **Discord notifications** for restarts, crashes, and recoveries
 - **Toggleable auto-restart** — enable/disable crash recovery without touching Task Scheduler
 - **Daily logs** for every scheduled run and watchdog check
+
+---
+
+## Known Limitations
+
+| Feature | Status | Notes |
+|---|---|---|
+| Auto update check | Disabled | `battlegroup update` causes a Steam symlink error on the Linux VM in the current server release. Set `$enableUpdateCheck = $true` at your own risk once Funcom resolves this. |
+| In-game restart warnings | Disabled | No broadcast or RCON interface is exposed by the battlegroup in the current release. Discord warnings work reliably. Both features are stubbed and ready to enable when official support lands. |
 
 ---
 
@@ -51,6 +59,8 @@ Place the new files alongside your existing `battlegroup-management` folder as s
 
 ### Step 2 — Create a Discord Webhook (optional)
 
+Skip this step if you don't want Discord notifications.
+
 1. In Discord, right-click your notification channel → **Edit Channel**
 2. Go to **Integrations** → **Webhooks** → **New Webhook**
 3. Name it (e.g. `Server Status`) and click **Copy Webhook URL**
@@ -59,17 +69,17 @@ Place the new files alongside your existing `battlegroup-management` folder as s
 
 ### Step 3 — Configure the script
 
-Open `battlegroup-management\scheduled-restart.ps1` in Notepad or VS Code and edit the `CONFIGURATION` section:
+Open `battlegroup-management\scheduled-restart.ps1` in Notepad or VS Code and fill in the `CONFIGURATION` section:
 
 ```powershell
-$vmName     = 'dune-awakening'          # Your VM name — leave as-is unless you changed it
-$sshKeyPath = "C:\Users\YourName\..."   # Path to your SSH key — auto-fills your username
+$vmName     = 'dune-awakening'          # Your VM name — leave as-is unless changed
+$sshKeyPath = "C:\Users\YourName\..."   # Auto-fills your Windows username
 $webhookUrl = "https://discord.com/..."  # Paste your webhook URL here
 
-$enableRestartWarnings = $true          # Toggle pre-restart warnings
+$enableRestartWarnings = $true          # Toggle pre-restart Discord warnings
 $warningMinutes        = @(15, 5, 1)   # Warn at 15, 5, and 1 minute before restart
 
-$enableUpdateCheck  = $true            # Check for and apply updates before each restart
+$enableUpdateCheck  = $false           # Disabled — see Known Limitations above
 $enableCrashRestart = $true            # Auto-restart on crash (used by watchdog)
 ```
 
@@ -103,7 +113,7 @@ This creates a task that checks battlegroup health every 5 minutes.
 
 1. Open **Task Scheduler** and find `DuneAwakening-Restart`
 2. Right-click → **Run**
-3. Watch your Discord channel — you should see warning messages counting down, then restart and success notifications
+3. Watch your Discord channel — you should see warning messages counting down, then a restart notification and a success confirmation
 
 ---
 
@@ -116,7 +126,7 @@ $enableCrashRestart = $true    # enabled
 $enableCrashRestart = $false   # disabled
 ```
 
-No need to re-register anything — the watchdog reads this value every time it runs.
+No need to re-register anything — the watchdog reads this value on every run.
 
 ---
 
@@ -128,7 +138,7 @@ The default schedule restarts every **4 hours starting at 4:00 AM**:
 4:00 AM  |  8:00 AM  |  12:00 PM  |  4:00 PM  |  8:00 PM  |  12:00 AM
 ```
 
-To change it, edit the `-At` and `-Hours` values in `register-task.ps1`, then re-run it (it will ask before replacing the existing task).
+To change it, edit the `-At` and `-Hours` values in `register-task.ps1`, then re-run it. It will ask before replacing the existing task.
 
 ---
 
@@ -137,7 +147,6 @@ To change it, edit the `-At` and `-Hours` values in `register-task.ps1`, then re
 | Notification | Color | Trigger |
 |---|---|---|
 | Restarting in X minutes | 🟠 Orange | Pre-restart warning |
-| Server updated | 🔵 Blue | Update applied before restart |
 | Server restarting now | 🟡 Yellow | Restart begins |
 | Restart successful | 🟢 Green | Restart completed |
 | Crash detected | 🔴 Red | Watchdog found server down |
@@ -149,7 +158,7 @@ To change it, edit the `-At` and `-Hours` values in `register-task.ps1`, then re
 
 ## Logs
 
-All logs are written to the `logs\` folder:
+All logs are written to the `logs\` folder next to your scripts:
 
 - `scheduled-restart-YYYY-MM-DD.log` — one file per day for restart runs
 - `watchdog-YYYY-MM-DD.log` — one file per day for watchdog checks
@@ -159,25 +168,36 @@ All logs are written to the `logs\` folder:
 
 ## Troubleshooting
 
-**Warnings fire but restart doesn't happen**
-Check the log — if the update step times out it may be holding up the process. Set `$enableUpdateCheck = $false` temporarily to isolate.
+**Restart fails with a Steam symlink error**
+The update check is likely still enabled. Set `$enableUpdateCheck = $false` in `scheduled-restart.ps1`.
 
-**Watchdog keeps restarting the server during a scheduled restart**
-The watchdog requires 2 consecutive failed checks before acting, and a scheduled restart should complete within one 5-minute window. If overlap is a problem, consider extending the watchdog interval in `register-watchdog.ps1`.
+**Watchdog keeps restarting during a scheduled restart**
+The watchdog requires 2 consecutive failed checks before acting. A normal restart should complete within one 5-minute window. If overlap is still an issue, increase the watchdog interval in `register-watchdog.ps1`.
 
-**In-game warning not appearing**
-In-game broadcast uses a best-effort pod console method. Whether players see the message depends on your battlegroup version and whether the pods expose a console interface. Discord warnings are always reliable.
+**Discord messages not appearing**
+Check the webhook URL in `scheduled-restart.ps1`. Verify the webhook still exists under **Edit Channel → Integrations → Webhooks**.
 
 **Task Scheduler shows Last Run Result: 0x1**
 The script hit an error — open the log file for that day for details.
+
+**SSH key not found error**
+The default key path uses your Windows username. If you ran initial setup under a different account, update `$sshKeyPath` in `scheduled-restart.ps1` to the correct path.
 
 ---
 
 ## Security Notes
 
-- Your Discord webhook URL is stored in plaintext in `scheduled-restart.ps1`. Do not commit this file to a public repository. Add it to `.gitignore` (already included).
+- Your Discord webhook URL is stored in plaintext in `scheduled-restart.ps1`. Do not commit the configured file to a public repository — it is listed in `.gitignore` by default. Only the `.example.ps1` template (with no URL) should be committed.
 - The SSH key is restricted to your user account by the Dune Awakening initial setup.
-- The scheduled tasks run with elevated privileges — ensure the script folder is only writable by administrators.
+- Scheduled tasks run with elevated privileges. Ensure the script folder is only writable by administrators.
+
+---
+
+## Contributing
+
+Pull requests welcome. Please test against a running Dune Awakening server before submitting.
+
+Issues and feature requests can be filed via GitHub Issues.
 
 ---
 
