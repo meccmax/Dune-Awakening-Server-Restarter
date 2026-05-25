@@ -1,13 +1,4 @@
 #Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    Registers the crash watchdog as a scheduled task running every 5 minutes.
-
-.NOTES
-    Run this once from an elevated PowerShell window.
-    The watchdog checks battlegroup health every 5 minutes and auto-restarts
-    on crash if $enableCrashRestart is set to $true in scheduled-restart.ps1.
-#>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -24,18 +15,17 @@ $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) {
     $confirm = Read-Host "Task '$taskName' already exists. Replace it? [Y/N]"
     if ($confirm -ne 'Y') {
-        Write-Host "Aborted." -ForegroundColor Yellow
+        Write-Host "Aborted."
         exit 0
     }
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    Write-Host "Existing task removed." -ForegroundColor Cyan
+    Write-Host "Existing task removed."
 }
 
 $action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`""
 
-# Runs every 5 minutes continuously
 $trigger = New-ScheduledTaskTrigger `
     -RepetitionInterval (New-TimeSpan -Minutes 5) `
     -RepetitionDuration (New-TimeSpan -Days 365) `
@@ -57,7 +47,7 @@ Register-ScheduledTask `
     -Description "Monitors Dune Awakening battlegroup health and auto-restarts on crash" | Out-Null
 
 Write-Host ""
-Write-Host "Watchdog task '$taskName' registered successfully." -ForegroundColor Green
-Write-Host "Checks every 5 minutes. Auto-restart is controlled by `$enableCrashRestart in scheduled-restart.ps1." -ForegroundColor Cyan
+Write-Host "Task '$taskName' registered successfully."
+Write-Host "Checks every 5 minutes. Toggle auto-restart via enableCrashRestart in scheduled-restart.ps1."
 Write-Host ""
-Write-Host "You will be prompted for your Windows password to store with the task." -ForegroundColor Yellow
+Write-Host "You will be prompted for your Windows password to store with the task."

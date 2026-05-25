@@ -1,13 +1,4 @@
 #Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    Registers a Windows Task Scheduler task to restart the Dune Awakening
-    battlegroup every 4 hours.
-
-.NOTES
-    Run this script once from an elevated PowerShell window.
-    Re-running will prompt to replace the existing task if one exists.
-#>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -20,23 +11,21 @@ if (-not (Test-Path $scriptPath)) {
     exit 1
 }
 
-# Remove existing task if present
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) {
     $confirm = Read-Host "Task '$taskName' already exists. Replace it? [Y/N]"
     if ($confirm -ne 'Y') {
-        Write-Host "Aborted." -ForegroundColor Yellow
+        Write-Host "Aborted."
         exit 0
     }
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    Write-Host "Existing task removed." -ForegroundColor Cyan
+    Write-Host "Existing task removed."
 }
 
 $action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$scriptPath`""
 
-# Repeats every 4 hours for 1 year, starting at 4:00 AM
 $trigger = New-ScheduledTaskTrigger `
     -RepetitionInterval (New-TimeSpan -Hours 4) `
     -RepetitionDuration (New-TimeSpan -Days 365) `
@@ -44,7 +33,7 @@ $trigger = New-ScheduledTaskTrigger `
 
 $settings = New-ScheduledTaskSettingsSet `
     -RunOnlyIfNetworkAvailable `
-    -ExecutionTimeLimit "00:10:00" `
+    -ExecutionTimeLimit "01:00:00" `
     -StartWhenAvailable
 
 Register-ScheduledTask `
@@ -57,8 +46,7 @@ Register-ScheduledTask `
     -Description "Restarts the Dune Awakening battlegroup every 4 hours" | Out-Null
 
 Write-Host ""
-Write-Host "Task '$taskName' registered successfully." -ForegroundColor Green
-Write-Host "Schedule: every 4 hours starting at 4:00 AM (4AM, 8AM, 12PM, 4PM, 8PM, 12AM)" -ForegroundColor Cyan
+Write-Host "Task '$taskName' registered successfully."
+Write-Host "Schedule: every 4 hours starting at 4:00 AM"
 Write-Host ""
-Write-Host "You will be prompted for your Windows password to store with the task." -ForegroundColor Yellow
-Write-Host "To test it now, open Task Scheduler, find '$taskName', and click Run." -ForegroundColor Yellow
+Write-Host "You will be prompted for your Windows password to store with the task."

@@ -1,41 +1,17 @@
 #Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    Scheduled battlegroup manager for Dune Awakening dedicated server.
-
-.DESCRIPTION
-    Handles scheduled restarts with pre-restart warnings, optional update checks,
-    and crash auto-restart toggle. Sends Discord notifications throughout.
-
-.NOTES
-    Intended to be run by Windows Task Scheduler.
-    Configure the CONFIGURATION section below before first use.
-    See README.md for full setup instructions.
-#>
 
 # ==============================================================================
-# CONFIGURATION — edit these values before use
+# CONFIGURATION
 # ==============================================================================
 
 $vmName     = 'dune-awakening'
-$sshKeyPath = "C:\Users\$env:USERNAME\AppData\Local\DuneAwakeningServer\sshKey"
-$webhookUrl = ""   # Paste your Discord webhook URL here (leave empty to disable)
+$sshKeyPath = "C:\Users\YourWindowsUsername\AppData\Local\DuneAwakeningServer\sshKey"
+$webhookUrl = ""
 
-# Restart warnings — warn players before restarting
-# Set to $true to enable, $false to disable
 $enableRestartWarnings = $true
-
-# Warning times in minutes before restart (customize as needed)
-$warningMinutes = @(15, 5, 1)
-
-# Update check — check for and apply updates before restarting
-# Set to $true to enable, $false to disable
-$enableUpdateCheck = $false  # Currently unsupported — see README for details
-
-# Auto-restart on crash — read by scheduled-watchdog.ps1
-# Toggle here to enable/disable without re-registering the watchdog task
-# Set to $true to enable, $false to disable
-$enableCrashRestart = $true
+$warningMinutes        = @(15, 5, 1)
+$enableUpdateCheck     = $false
+$enableCrashRestart    = $true
 
 # ==============================================================================
 # END CONFIGURATION
@@ -44,15 +20,10 @@ $enableCrashRestart = $true
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Logging
 $logDir  = Join-Path $PSScriptRoot "..\logs"
 $logFile = Join-Path $logDir "scheduled-restart-$(Get-Date -Format 'yyyy-MM-dd').log"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 Start-Transcript -Path $logFile -Append | Out-Null
-
-# ------------------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------------------
 
 function Send-DiscordNotification {
     param(
@@ -90,24 +61,10 @@ function Get-VmIp {
     return $ip
 }
 
-function Get-ServerVersion {
-    param([string]$Ip)
-    $result = Invoke-SshCommand -Ip $Ip -Command "/home/dune/.dune/bin/battlegroup status"
-    $match = [regex]::Match($result.Output, '(\d{7,}-\d+-\w+)')
-    if ($match.Success) { return $match.Value }
-    return $null
-}
-
-# In-game broadcast is not yet supported by the Dune Awakening battlegroup.
-# This function is a placeholder for when Funcom adds an official broadcast/RCON interface.
 function Send-InGameWarning {
     param([string]$Ip, [int]$MinutesRemaining)
-    Write-Host "In-game warning skipped ($MinutesRemaining min) — no broadcast interface available yet."
+    Write-Host "In-game warning skipped ($MinutesRemaining min) - no broadcast interface available yet."
 }
-
-# ------------------------------------------------------------------------------
-# Pre-flight checks
-# ------------------------------------------------------------------------------
 
 try {
     if (-not (Test-Path $sshKeyPath)) {
@@ -123,38 +80,6 @@ try {
 
     Write-Host "VM '$vmName' running at $ip."
 
-    # --------------------------------------------------------------------------
-    # Update check
-    # --------------------------------------------------------------------------
-
-    if ($enableUpdateCheck) {
-        Write-Host "Checking for server update..."
-        $versionBefore = Get-ServerVersion -Ip $ip
-        $displayVersionBefore = 'unknown'
-        if ($versionBefore) { $displayVersionBefore = $versionBefore }
-        Write-Host "Current version: $displayVersionBefore"
-
-        $updateResult = Invoke-SshCommand -Ip $ip -Command "/home/dune/.dune/bin/battlegroup update"
-        Write-Host "Update output: $($updateResult.Output)"
-
-        $versionAfter = Get-ServerVersion -Ip $ip
-
-        if ($versionBefore -and $versionAfter -and ($versionBefore -ne $versionAfter)) {
-            Write-Host "Update applied: $versionBefore -> $versionAfter"
-            Send-DiscordNotification `
-                -Message "**Dune Awakening** - Server updated from ``$versionBefore`` to ``$versionAfter``." `
-                -Color 3447003
-        } else {
-            $displayVersion = 'unknown'
-            if ($versionAfter) { $displayVersion = $versionAfter }
-            Write-Host "Server is up to date. Version: $displayVersion"
-        }
-    }
-
-    # --------------------------------------------------------------------------
-    # Pre-restart warnings
-    # --------------------------------------------------------------------------
-
     if ($enableRestartWarnings -and $warningMinutes.Count -gt 0) {
         $sortedWarnings = $warningMinutes | Sort-Object -Descending
         $totalLeadMinutes = $sortedWarnings[0]
@@ -168,26 +93,19 @@ try {
             }
             $elapsed = $totalLeadMinutes - $minutes
 
-            Write-Host "Sending $minutes-minute warning..."
             $warnSuffix = 'minutes'
             if ($minutes -eq 1) { $warnSuffix = 'minute' }
-            Send-DiscordNotification `
-                -Message "**Dune Awakening** - Server restarting in **$minutes $warnSuffix**. Find a safe location!" `
-                -Color 16744272
+            Write-Host "Sending $minutes-minute warning..."
+            Send-DiscordNotification -Message "**Dune Awakening** - Server restarting in **$minutes $warnSuffix**. Find a safe location!" -Color 16744272
             Send-InGameWarning -Ip $ip -MinutesRemaining $minutes
         }
 
-        # Wait out the final warning period
         $finalWait = ($sortedWarnings | Select-Object -Last 1) * 60
         if ($finalWait -gt 0) {
             Write-Host "Waiting $finalWait seconds before restart..."
             Start-Sleep -Seconds $finalWait
         }
     }
-
-    # --------------------------------------------------------------------------
-    # Restart
-    # --------------------------------------------------------------------------
 
     Write-Host "Restarting battlegroup..."
     Send-DiscordNotification -Message "**Dune Awakening** - Server is restarting now..." -Color 16776960
